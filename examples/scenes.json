@@ -1,0 +1,23 @@
+[
+  {
+    "id": "summary",
+    "title": "Problem, cause and fix",
+    "kind": "summary",
+    "narration": "Describe the observed problem, the confirmed root cause, and what the fix changes. Replace this example with facts supported by your evidence.",
+    "sources": []
+  },
+  {
+    "id": "saved-settings",
+    "title": "Saved settings survive reload",
+    "narration": "The setting is saved. After a full reload, the same value is still displayed.",
+    "clips": [
+      {
+        "file": "attempt-01/raw/session.webm",
+        "start": 12.0,
+        "end": 20.0,
+        "revision": "replace-with-verified-build"
+      }
+    ],
+    "note": "Example manifest only; not verification evidence"
+  }
+]
