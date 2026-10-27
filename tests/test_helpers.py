@@ -92,7 +92,9 @@ class ExportServerTests(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        handler = functools.partial(QuietHandler, directory=str(cls.root))
+        # Deliberately synthetic fixture key.
+        cls.key = 'k' * 43
+        handler = functools.partial(QuietHandler, directory=str(cls.root), key=cls.key)
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -105,12 +107,21 @@ class ExportServerTests(unittest.TestCase):
         cls.thread.join()
         cls.temp.cleanup()
 
-    def get(self, path, **headers):
-        return urllib.request.urlopen(urllib.request.Request(self.base + path, headers=headers), timeout=5)
+    def get(self, path, keyed=True, **headers):
+        prefix = '/' + self.key if keyed else ''
+        return urllib.request.urlopen(urllib.request.Request(self.base + prefix + path, headers=headers), timeout=5)
+
+    def assert_status(self, path, status, keyed=True):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get(path, keyed=keyed)
+        self.assertEqual(caught.exception.code, status)
+        caught.exception.close()
 
     def test_index_and_full_file(self):
         with self.get('/') as response:
             self.assertIn(b'Reviewed export', response.read())
+            self.assertEqual(response.headers['Referrer-Policy'], 'no-referrer')
+            self.assertEqual(response.headers['X-Robots-Tag'], 'noindex, nofollow')
         with self.get('/clip.mp4') as response:
             self.assertEqual(response.status, 200)
             self.assertEqual(response.read(), b'0123456789')
@@ -130,10 +141,48 @@ class ExportServerTests(unittest.TestCase):
 
     def test_hidden_symlink_traversal_and_listing_are_rejected(self):
         for path in ['/.hidden', '/linked.mp4', '/%2e%2e/outside', '/empty/']:
-            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as caught:
-                self.get(path)
-            self.assertEqual(caught.exception.code, 403)
-            caught.exception.close()
+            with self.subTest(path=path):
+                self.assert_status(path, 403)
+
+    def test_paths_without_the_key_are_not_found(self):
+        for path in ['/', '/index.html', '/clip.mp4', '/' + 'x' * 43 + '/clip.mp4', '/' + self.key[:-1] + '/clip.mp4']:
+            with self.subTest(path=path):
+                self.assert_status(path, 404, keyed=False)
+
+    def test_bare_key_redirects_to_the_directory(self):
+        with self.get('') as response:
+            self.assertEqual(response.url, self.base + '/' + self.key + '/')
+            self.assertIn(b'Reviewed export', response.read())
+
+
+class KeyFileTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.export = self.root / 'public'
+        self.export.mkdir()
+
+    def test_key_file_is_created_private_and_reused(self):
+        key_file = self.root / 'access.key'
+        key = serve.load_key(key_file, self.export)
+        self.assertRegex(key, serve.KEY_PATTERN)
+        self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(serve.load_key(key_file, self.export), key)
+
+    def test_without_key_file_each_key_is_new(self):
+        self.assertNotEqual(serve.load_key(None, self.export), serve.load_key(None, self.export))
+
+    def test_key_file_inside_export_is_refused(self):
+        with self.assertRaises(SystemExit):
+            serve.load_key(self.export / 'access.key', self.export)
+        self.assertFalse((self.export / 'access.key').exists())
+
+    def test_short_key_is_refused(self):
+        key_file = self.root / 'access.key'
+        key_file.write_text('short')
+        with self.assertRaises(SystemExit):
+            serve.load_key(key_file, self.export)
 
 
 if __name__ == '__main__':

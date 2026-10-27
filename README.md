@@ -8,7 +8,7 @@ Record real browser tests and produce a narrated verification video with caption
 - **Playwright + a supported browser** — application recording and verification.
 - **FFmpeg + ffprobe** with H264/AAC support — editing and export.
 - **OpenRouter account + API key** — paid narration using `elevenlabs/eleven-multilingual-v2`, voice `george`. Supply `OPENROUTER_API_KEY` or `--key-file`.
-- **cloudflared** — optional temporary public hosting.
+- **cloudflared** — optional temporary hosting; the bundled server keeps the report behind an unguessable key in the URL path.
 - **Pillow** — optional title cards and annotations.
 - Access to your running app; tracker and observability integrations when needed.
 
@@ -18,7 +18,7 @@ Install these separately. No credentials are bundled.
 
 Download the [latest ZIP](../../releases/latest), then copy the entire `video/` directory into your agent's skills directory. Invoke `$video` or `/video`, or point your agent at [video/SKILL.md](video/SKILL.md).
 
-Specify the target build and authorize any paid narration or public publication.
+Specify the target build and authorize any paid narration or publication.
 
 See the [production guide](video/references/production.md) for capture, editing, helper commands, and hosting. Start chapter manifests from [examples/scenes.json](examples/scenes.json).
 

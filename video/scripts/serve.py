@@ -1,16 +1,45 @@
 #!/usr/bin/env python3
-"""Serve an explicitly reviewed export on loopback with video byte ranges."""
+"""Serve an explicitly reviewed export on loopback with video byte ranges.
+
+The server answers only below a secret path prefix, /<key>/. Every other path
+returns 404, so the tunnel URL alone does not give access to the export.
+"""
 
 import argparse
 import functools
+import hmac
+import os
+import secrets
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
 
+KEY_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,}")
+
+
 class ExportHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def __init__(self, *args, key, **kwargs):
+        self.key = key
+        super().__init__(*args, **kwargs)
+
+    def log_message(self, format, *args):
+        # Keep the access key out of the server log.
+        super().log_message("%s", (format % args).replace(self.key, "<key>"))
+
+    def translate_path(self, path):
+        # send_head accepts only paths below /<key>/, so remove that prefix here.
+        prefix = f"/{self.key}"
+        if path.startswith(prefix):
+            path = path[len(prefix):] or "/"
+        return super().translate_path(path)
+
+    def key_matches(self):
+        segments = urlsplit(self.path).path.split("/", 2)
+        return len(segments) >= 2 and hmac.compare_digest(segments[1].encode(), self.key.encode())
 
     def list_directory(self, path):
         self.send_error(403, "Directory listings disabled")
@@ -19,11 +48,23 @@ class ExportHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "no-store")
+        # The key is in the URL path. Do not send it to other sites or to search engines.
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Robots-Tag", "noindex, nofollow")
         self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
 
     def send_head(self):
         self.remaining = None
+        if not self.key_matches():
+            self.send_error(404, "Not found")
+            return None
+        if urlsplit(self.path).path == f"/{self.key}":
+            self.send_response(301)
+            self.send_header("Location", f"/{self.key}/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
         lexical_root = Path(self.directory).absolute()
         root = lexical_root.resolve()
         # Reject hidden/traversal paths and symlinks, even to files inside root.
@@ -101,17 +142,42 @@ class ExportHandler(SimpleHTTPRequestHandler):
             self.remaining -= len(chunk)
 
 
+def load_key(key_file, root):
+    """Read the key from key_file, or make a new key and write it there."""
+    if key_file is None:
+        return secrets.token_urlsafe(32)
+    key_file = key_file.expanduser().absolute()
+    if key_file.resolve().is_relative_to(root.resolve()):
+        raise SystemExit("The key file must be outside the export directory")
+    if key_file.exists():
+        key = key_file.read_text().strip()
+        if not KEY_PATTERN.fullmatch(key):
+            raise SystemExit("The key file must hold at least 32 URL-safe characters")
+        return key
+    key = secrets.token_urlsafe(32)
+    descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(key + "\n")
+    return key
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("directory", type=Path, help="Reviewed public export, never a private run directory")
+    parser.add_argument("directory", type=Path, help="Reviewed export directory, never a private run directory")
     parser.add_argument("--port", type=int, default=8837)
+    parser.add_argument(
+        "--key-file",
+        type=Path,
+        help="Private file (mode 600, outside the export) that keeps the access key across restarts",
+    )
     args = parser.parse_args()
     root = args.directory.resolve(strict=True)
     if not root.is_dir():
         parser.error("Export must be a directory")
-    handler = functools.partial(ExportHandler, directory=str(root))
+    key = load_key(args.key_file, root)
+    handler = functools.partial(ExportHandler, directory=str(root), key=key)
     with ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
-        print(f"Public export server: http://127.0.0.1:{server.server_port}/", flush=True)
+        print(f"Key-protected export server: http://127.0.0.1:{server.server_port}/{key}/", flush=True)
         server.serve_forever()
 
 

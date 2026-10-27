@@ -4,7 +4,7 @@ Helpers handle repeatable mechanics; they do not perform or certify the applicat
 
 ## Capture and files
 
-Keep a private run directory outside the repository, one attempt/build per subdirectory. Keep authentication elsewhere. Use a separate `public/` directory for reviewed exports only; never tunnel the private run directory. A useful layout is `attempt-02/{raw/,screenshots/,timeline.json,coverage.json,runtime-proof.json}`, plus `edit/`, `audio/`, `scenes.json` and `public/`.
+Keep a private run directory outside the repository, one attempt/build per subdirectory. Keep authentication elsewhere. Use a separate `public/` directory for reviewed exports only; never tunnel the private run directory. Keep the access key file (`access.key`, mode 600) in the run directory, outside `public/`. A useful layout is `attempt-02/{raw/,screenshots/,timeline.json,coverage.json,runtime-proof.json}`, plus `edit/`, `audio/`, `scenes.json` and `public/`.
 
 Playwright pattern (adapt login/imports to the repository):
 
@@ -72,34 +72,35 @@ Animated diagrams:
 
 Encode `-c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart`. Use two-pass `loudnorm=I=-16:TP=-1.5:LRA=11`, with measured values in pass two. Preserve video/subtitles/chapters during audio-only normalization. Check ffprobe (duration, dimensions, audio/codecs, chapters) and full decode: `ffmpeg -v error -i final.mp4 -map 0:v -map 0:a -f null -`. A successful encode isn't a browser playback test.
 
-## Public report
+## Report
 
 Put a short written summary (bug, root cause, fix) above or beside the player. Use `<video controls playsinline preload="metadata">`, MP4 source, WebVTT captions and chapter buttons. Include download links and a responsive gallery/coverage matrix. Put a visible findings table beside the player: finding, scope/status, **actual tracker URL and requesting-user assignee**, evidence/chapter, workaround. Include fixed in-scope bugs and retest build; list missing coverage separately. Avoid third-party assets/trackers.
 
-Export only selected reviewed files: HTML, MP4, captions/script, selected screenshots and sanitized coverage/telemetry. Raw footage is optional public material; preserve it privately if unrelated/private content appears. Never publish cookie files, secrets, raw logs, private scripts or the entire run directory.
+Export only selected reviewed files: HTML, MP4, captions/script, selected screenshots and coverage/telemetry. Do not blur or redact footage or screenshots; the access key protects them. Raw footage is optional. Never publish cookie files, secrets, the access key file, raw logs, private scripts or the entire run directory. Use relative links inside the report so that they stay below `/<key>/`.
 
-## Anonymous Cloudflare hosting
+## Key-protected Cloudflare hosting
 
-The bundled server refuses dotfiles, symlinks and directory listings and supports HTTP byte ranges. Start it on a free loopback port, then a Quick Tunnel:
+The bundled server serves files only below `/<key>/` and returns 404 for every other path. It refuses dotfiles, symlinks and directory listings, supports HTTP byte ranges, sends `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`, and writes `<key>` instead of the key in request logs. Start it on a free loopback port, then a Quick Tunnel:
 
 ```sh
 # Use persistent tool sessions or managed detached processes with private
 # PID/log records. Substitute actual absolute paths; don't kill occupied ports.
-python3 <skill-dir>/scripts/serve.py <public-dir> --port 8837
+python3 <skill-dir>/scripts/serve.py <public-dir> --port 8837 --key-file <run-dir>/access.key
 cloudflared tunnel --url http://127.0.0.1:8837 --no-autoupdate
 ```
 
-Read the actual `https://…trycloudflare.com` URL from the log. No Cloudflare login/account is required. Keep both processes running after the final reply and keep lifecycle files outside the export. If either exits, diagnose/restart and validate the new URL. Quick Tunnels have no uptime guarantee and depend on this machine/processes staying online; don't present permanent hosting. If an existing cloudflared config interferes, inspect the error and isolate the new tunnel rather than overwriting/renaming the user's config blindly.
+Read the actual `https://…trycloudflare.com` hostname from the cloudflared log and the key from the key file. The deliverable link is `https://<host>.trycloudflare.com/<key>/`. No Cloudflare login/account is required. Keep both processes running after the final reply and keep lifecycle files outside the export. If either exits, diagnose/restart and validate the new URL; the key file keeps the key, but a new tunnel gets a new hostname. Quick Tunnels have no uptime guarantee and depend on this machine/processes staying online; don't present permanent hosting. If an existing cloudflared config interferes, inspect the error and isolate the new tunnel rather than overwriting/renaming the user's config blindly.
 
-Validate through the **public** hostname:
+Validate through the **keyed** public URL:
 
-- HTML opens without login, password or challenge; no page errors.
+- `https://<host>/` and `https://<host>/<wrong-key>/` return 404.
+- `https://<host>/<key>/` opens without login or challenge; no page errors.
 - Browser playback succeeds: currentTime advances, videoWidth>0, readyState>=2, error===null.
 - Seek to a later chapter and verify decoded frames/time advance.
 - MP4 `Range: bytes=0-1023` returns HTTP206, correct Content-Range, length and MIME type.
 - Captions, chapters and MP4/script downloads work.
 - Phone viewport can operate the player and read findings without clipping.
 
-Attach public evidence/chapter links to filed tasks, then read back assignments. Tracker/public-playback failure means incomplete delivery: say exactly what remains.
+Attach evidence/chapter links to filed tasks only if the user asked to share the key there, then read back assignments. Tracker/public-playback failure means incomplete delivery: say exactly what remains.
 
 Primary references: [OpenRouter speech API](https://openrouter.ai/docs/guides/overview/multimodal/tts), [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/), [Claude Code skills](https://code.claude.com/docs/en/skills).
